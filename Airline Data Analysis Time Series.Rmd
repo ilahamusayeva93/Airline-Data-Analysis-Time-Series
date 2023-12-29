@@ -1,0 +1,144 @@
+---
+title: "Airline Data Analysis (Time Series)"
+author: "Ilaha Musayeva"
+date: "11.20.2023"
+---
+## Data Exploration and Preparing for Modelling
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(data.table)
+library(lubridate)
+library(skimr)
+library(timetk)
+library(highcharter)
+library(h2o)
+library(tidymodels)
+library(modeltime)
+
+# Check the current working directory
+getwd()
+
+# Load and explore the dataset
+data <- read.csv("airpassengers.csv")
+
+# Data Exploration
+# Display the structure of the data
+str(data)
+
+# Visualize the data in the RStudio Viewer
+View(data)
+
+# Rename columns
+colnames(data) <- c('Date', 'Count')
+
+# Display the structure of the data after renaming columns
+data %>% glimpse()
+
+# Preprocess date column
+data$Date <- paste(data$Date, "-01", sep="")
+data$Date <- as.Date(data$Date, format="%Y-%m-%d")
+
+# Display the structure of the data after preprocessing date column
+str(data)
+
+# Visualize time series data
+# Assuming `interactive` is a logical variable
+data %>% plot_time_series(Date, Count, .interactive = TRUE)  
+
+
+# Time series splitting
+splits <- initial_time_split(data, prop = 0.9)
+```
+
+## Modelling
+
+```{r}
+# Model 1: arima_boost ----
+model_fit_arima_boosted <- arima_boost(
+  min_n = 2,
+  learn_rate = 0.015
+) %>%
+  set_engine(engine = "auto_arima_xgboost") %>%
+  fit(Count ~ Date + as.numeric(Date) + factor(format(Date, "%m"), ordered = FALSE),
+      data = training(splits))
+
+# Model 2: prophet ----
+model_fit_prophet <- prophet_reg() %>%
+  set_engine(engine = "prophet") %>%
+  fit(Count ~ Date, data = training(splits))
+
+# Model 3: ets ----
+model_fit_ets <- exp_smoothing() %>%
+  set_engine(engine = "ets") %>%
+  fit(Count ~ Date, data = training(splits))
+```
+## Model Evaluation
+```{r}
+# Compare RMSE score on test data
+predictions_arima_boosted <- predict(model_fit_arima_boosted, new_data = testing(splits)) %>%
+  bind_cols(testing(splits))
+predictions_prophet <- predict(model_fit_prophet, new_data = testing(splits)) %>%
+  bind_cols(testing(splits))
+predictions_ets <- predict(model_fit_ets, new_data = testing(splits)) %>%
+  bind_cols(testing(splits))
+
+rmse_arima_boosted <- sqrt(mean((predictions_arima_boosted$Count - predictions_arima_boosted$.pred)^2))
+rmse_prophet <- sqrt(mean((predictions_prophet$Count - predictions_prophet$.pred)^2))
+rmse_ets <- sqrt(mean((predictions_ets$Count - predictions_ets$.pred)^2))
+
+cat("RMSE for arima_boosted:", rmse_arima_boosted, "\n")
+cat("RMSE for prophet:", rmse_prophet, "\n")
+cat("RMSE for ets:", rmse_ets, "\n")
+
+# Model Selection and Forecasting
+# Make forecast on the model with the lowest RMSE score
+lowest_rmse_model <- which.min(c(rmse_arima_boosted, rmse_prophet, rmse_ets))
+if (lowest_rmse_model == 1) {
+  final_forecast <- predict(model_fit_arima_boosted, new_data = data) %>%
+    bind_cols(data)
+} else if (lowest_rmse_model == 2) {
+  final_forecast <- predict(model_fit_prophet, new_data = data) %>%
+    bind_cols(data)
+} else {
+  final_forecast <- predict(model_fit_ets, new_data = data) %>%
+    bind_cols(data)
+}
+
+# Visualize past data and forecast values on one plot with different colors
+ggplot() +
+  geom_line(data = final_forecast, aes(x = Date, y = .pred, color = "Forecast"), linetype = "dashed") +
+  geom_line(data = data, aes(x = Date, y = Count, color = "Actual")) +
+  labs(title = "Past Data and Forecast Values",
+       x = "Date",
+       y = "Count") +
+  scale_color_manual(values = c("Actual" = "blue", "Forecast" = "red"), guide = "legend") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
